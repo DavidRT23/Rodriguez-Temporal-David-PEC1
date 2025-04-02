@@ -1,0 +1,109 @@
+---
+title: "PEC1"
+author: "David Rodriguez Temporal"
+date: "2025-03-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Instalamos los paquetes y librerías necesarias para trabajar con estos datos:
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("metabolomicsWorkbenchR")
+```
+
+```{r}
+BiocManager::install("SummarizedExperiment")
+```
+
+```{r}
+library(metabolomicsWorkbenchR)
+library(SummarizedExperiment)
+```
+
+Cargamos la matriz de datos y los metadatos.
+```{r}
+datos <- read.delim("C:/Users/USER/Desktop/Master Bioinfo/Análisis datos ómicos/Reto 1/PEC1/ST003777_AN006203_Results.txt")
+
+metadatos <- read.delim("metadatos.txt", sep = "\t", header = TRUE, quote = "", fill = TRUE)
+
+#Eliminamos la primera columna (que indica los metabolitos) para que no se considere una muestra más.
+rownames(datos) <- datos[, 1]
+datos <- datos[, -1]
+rownames(metadatos) <- metadatos$SampleID
+```
+
+Creamos el SummarizedExperiment:
+```{r}
+sum_exp <- SummarizedExperiment(
+  assays = list(counts = as.matrix(datos)),  # Matriz de metabolitos
+  colData = metadatos  # Metadatos de muestras
+)
+
+sum_exp
+```
+La diferencia de SummarizedExperiment con ExpressionSet es que SummarizedExperiment lo podemos utilizar para analizar distintos tipos de datos ómicos, y que ExpressionSet está más enfocado a microarrays por ejemplo o datos de secuenciación génica. 
+
+##Análisis exploratorio
+
+Para comenzar, vemos lo que tenemos. 
+```{r}
+dim(sum_exp)
+```
+Tenemos las 9 muestras y la medición de 743 metabolitos. 
+
+Vamos a empezar realizando un histograma, uno para cada muestra para ver la distribución de las mediciones en cada tipo de muestra. 
+```{r}
+opt <- par(mfrow=c(3,3))
+for (i in 1:ncol(assays(sum_exp)$counts)) {
+  log_counts <- log2(assays(sum_exp)$counts[,i] + 1)
+  hist(log_counts, 
+       main = colnames(sum_exp)[i],    
+       xlab = "Intensidad (log2)",     
+       ylab = "Frecuencia",            
+       col = "lightblue",              
+       border = "black",              
+       breaks = 40)                    
+}
+par(opt)
+```
+Aunque no consigo ajustar bien la resolución, parece que hay una distribución similar en todas las muestras, excepto las H1, H2 y H3 que representan blancos. 
+
+Vamos a seguir con un boxplot:
+```{r}
+boxplot(assays(sum_exp)$counts, 
+        main = "Distribución de las Muestras (Datos Originales)", 
+        xlab = "Muestras",                                        
+        ylab = "Intensidad")                    
+```
+Vemos que hay una gran cantidad de mediciones de muy baja o nula intensidad, lo que parece que podría tener sentido ya que no todos los metabolitos medidos deben tener mucha expresión, y nos va a interesar más aquellos con alta intensidad. 
+
+Vamos a realizar un análisis multivariado, mediante un PCA:
+```{r}
+counts_data <- assays(sum_exp)$counts
+pcX <- prcomp(t(counts_data), scale = FALSE)
+loads <- round(pcX$sdev^2 / sum(pcX$sdev^2) * 100, 1)
+xlab <- c(paste("PC1", loads[1], "%"))
+ylab <- c(paste("PC2", loads[2], "%"))
+plot(pcX$x[, 1:2], xlab = xlab, ylab = ylab, 
+     main = "Principal components (PCA)")
+sample_names <- colnames(counts_data)
+text(pcX$x[, 1], pcX$x[, 2], sample_names, pos = 3, cex = 0.6)
+```
+Vemos las agrupaciones que se podían esperar: las muestras de blanco y los controles, formando agrupaciones entre ellas y, por otro lado, las muestras de bacterias. En estas últimas, vemos mucho más cercanas la C1 y la C2, por lo que podrían ser más parecidas entre ellas. 
+
+A continuación podemos ver otra agrupación mediante hierarchichal clustering:
+```{r}
+colnames(counts_data) <- colnames(sum_exp)
+dist_matrix <- dist(t(counts_data))
+clust.euclid.average <- hclust(dist_matrix, method = "average")
+plot(clust.euclid.average, hang=-1)
+```
+Volvemos a confirmar la agrupación anterior, y que C1 y C2 sugieren ser más parecidas entre ellas que con C3. 
+
+Podríamos continuar el análisis buscando aquellos datos que hacen que la muestra C3 sea diferente de las otras dos. 
